@@ -1,0 +1,280 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="UTF-8" />
+    <title>The Case</title>
+    <script src="//cdn.jsdelivr.net/npm/phaser@3.87.0/dist/phaser.js"></script>
+    <style>
+        body {
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+<script>
+    var config = {
+        type: Phaser.AUTO,
+        width: 800,
+        height: 600,
+        scene: {
+            preload: preload,
+            create: create,
+            update: update
+        }
+    };
+
+    var words = ['EAST', 'SEAT', 'EAT', 'SET', 'TEA'];
+    var axes = ['horizontal', 'vertical'];
+    var placedWords = [];
+    var grid = Array.from({ length: 10 }, () => Array(10).fill(null));
+    var displayObjects = [];
+    var wrongWordOrders = [];
+
+    var game = new Phaser.Game(config);
+
+    function preload() {
+        this.load.image('background', 'assets/background.png');
+    }
+
+    function create() {
+        this.add.image(400, 300, 'background');
+
+        placeWords(this);
+        placeAllWordsOnGrid(placedWords);
+        displayGrid(this);
+
+        let button = this.add.text(650, 540, 'Refresh', { font: '32px Arial', fill: '#ffffff' })
+        .setInteractive()
+        .on('pointerdown', () => {
+            refresh(this); 
+            button.setStyle({ fill: '#ff0000' });
+        })
+        .on('pointerup', () => {
+            button.setStyle({ fill: '#ffffff' });
+        })
+        .on('pointerout', () => {
+            button.setStyle({ fill: '#ffffff' });
+        });
+        }
+
+    function update() {
+        // no need for this case
+    }
+
+    function placeWord(word, axis, x, y) {
+        let position = [];
+        let cellNo = x*10 + y; //this is an index of the 10x10 grid to use it for positions
+        for (let i = 0; i < word.length; i++) { // set positions of all letters of the word
+            position.push(axis=='horizontal' ? cellNo+i : cellNo+(i*10));
+        }
+
+        return position;
+    }
+
+    function placeFirstWord(words) {
+        let x = 3;
+        let y = 5;
+        let axis = Phaser.Math.RND.pick(axes); //the first word takes random axis
+        placedWords.push({word: words[0], axis: axis, position: placeWord(words[0], axis, x, y)});
+    }
+
+    function placeWords(scene) { //it takes scene parameter to use it to call refresh function
+        let thisWords = words;
+        placeFirstWord(thisWords);
+        let remainingWords = thisWords.slice(1);
+
+        let attempts = 0; //this is for possible infinite loops
+        while (remainingWords.length > 0 && attempts < 100) {
+            attempts ++;
+            if (attempts == 100) { //if the loop is going to infinite
+                wrongWordOrders.push(words); //then save that wrong word order
+                refresh(scene); //and call refresh again
+                return;
+            }
+
+            let placements = []; //this array holds all possible placements for one word
+            Array.from(remainingWords[0]).forEach((letter_A, index_A) => { //loop for each letter of first remaining word
+                placedWords.forEach((wordObject) => { //loop for each word that has been already placed
+                    Array.from(wordObject.word).forEach((letter_B, index_B) => { //loop for each letter of the current placed word
+                        if (letter_A == letter_B) { //if there is an intersect letter
+                            let intersectCellNo = wordObject.position[index_B]; //take the grid number of that letter from the already placed one
+                            let axis = (wordObject.axis == 'horizontal' ? 'vertical' : 'horizontal'); //set the axis of current remaining word to opposite of placed one
+                            let firstLetterCellNo = //calculate the grid number of the first letter of the remaining word
+                            (axis == 'horizontal' ? intersectCellNo - index_A : intersectCellNo - index_A*10);
+                            placements.push({ word: remainingWords[0], axis, firstLetterCellNo});
+                            
+                        }
+                    })
+                })
+            })
+            
+            let validPlacement = false; //now its time for tests!!!
+            for (let i = 0; i < placements.length; i++) { //check placements in a loop
+                let y = (placements[i].firstLetterCellNo % 10); //row
+                let x = Math.trunc(placements[i].firstLetterCellNo / 10); //column
+                delete placements[i].firstLetterCellNo; //no need this anymore
+                placements[i].position = placeWord(remainingWords[0], placements[i].axis, x, y); //set position
+
+                let outOfGrid = false; //check if positions are out of grid
+                placements[i].position.forEach((cellNo) => {
+                    if (cellNo < 0 || cellNo >= 100) {
+                        outOfGrid = true;
+                    }
+                })
+
+                let test = true; //another test if the word isn't out of grid
+                if (!outOfGrid) {
+                    placedWords.push(placements[i]); //this is a temporary addition to see the word like placed
+
+                    let gridWords = getGridWords(); //take the all words created in grid
+                    gridWords.forEach((word) => {
+                        if (!words.includes(word)) { //if any are not in words list, thats a wrong placement
+                            test = false;
+                        }
+                    })
+
+                    if (new Set(gridWords).size != gridWords.length || //if there are any repeated words
+                    gridWords.length != thisWords.slice(0, placedWords.length).length) { //or any completely covered words
+                        test = false;
+                    }
+                    placedWords.pop(); //remove the temporary addition
+                    
+                }
+
+                if (test && !outOfGrid) { //if placement is finally correct
+                    validPlacement = true;
+                    placedWords.push(placements[i]);
+                    remainingWords.shift();
+                    break;
+                }
+                
+            }
+
+            if (!validPlacement) { //if placement is not correct take the first elements of these arrays and put it to end of these arrays to try again later
+                thisWords.push(thisWords.splice(thisWords.indexOf(remainingWords[0]), 1)[0]);
+                remainingWords.push(remainingWords.shift());
+            }
+        }
+
+    }
+
+    function refresh(scene) {
+        //clear these 3
+        clearDisplayObjects();
+        placedWords = [];
+        grid = Array.from({ length: 10 }, () => Array(10).fill(null));
+
+        let previousWords = [...words];
+        let shuffledWords = [];
+
+        do { //dont shuffle same order or dont shuffle a saved wrong Word Order
+            shuffledWords = Phaser.Utils.Array.Shuffle([...words]);
+        } while (shuffledWords == previousWords || wrongWordOrders.includes(shuffledWords));
+
+        words = shuffledWords;
+        placeWords(scene);
+        placeAllWordsOnGrid(placedWords);
+        displayGrid(scene);
+    }
+
+
+    function getGridWords() { //scan the grid
+        let gridWords = [];
+        for (let row = 0; row < 10; row++) { //horizontal scan
+            let thisWord = '';
+            for (let column = 0; column < 10; column++) {
+                
+                if (getBlocksAtCellNo((row*10) + column).length) { //if the cell has been used at least once
+                    thisWord = thisWord + getBlocksAtCellNo((row*10) + column)[getBlocksAtCellNo((row*10) + column).length-1]; //take the last letter is putted
+                    if (thisWord.length > 1 && column == 9) { //if it has more than 1 letter and at last column
+                        gridWords.push(thisWord);
+                    }
+                }
+                else {
+                    thisWord.length > 1 && gridWords.push(thisWord); //if the next cell is empty but word has more than 1 letter
+                    thisWord = ''; //clear
+                }
+            }
+        }
+
+        for (let column = 0; column < 10; column++) { //vertical scan
+            let thisWord = '';
+            for (let row = 0; row < 10; row++) {
+                if (getBlocksAtCellNo((row*10) + column).length) {
+                    thisWord = thisWord + getBlocksAtCellNo((row*10) + column)[getBlocksAtCellNo((row*10) + column).length-1];
+                    if (thisWord.length > 1 && row == 9) {
+                        gridWords.push(thisWord);
+                    }
+                }
+                else {
+                    thisWord.length > 1 && gridWords.push(thisWord);
+                    thisWord = '';
+                }
+            }
+        }
+        return gridWords;
+    }
+
+    function getBlocksAtCellNo(cellNo) { //get used letters in one cell
+        let blocksFound = [];
+        placedWords.forEach((wordObject) => {
+            let index = wordObject.position.indexOf(cellNo)
+            if (index !== -1) {
+                blocksFound.push(wordObject.word[index]);
+            }
+        })
+        return blocksFound;
+    }
+
+    function placeWordOnGrid(wordObject) { //place all final positions of a word's letters
+        for (let i = 0; i < wordObject.word.length; i++) {
+            let y = Math.trunc(wordObject.position[i] / 10);
+            let x = wordObject.position[i] % 10;
+
+            grid[y][x] = wordObject.word[i];
+        }
+    }
+
+    function placeAllWordsOnGrid(placedWords) {
+        placedWords.forEach((wordObject) => {
+            placeWordOnGrid(wordObject);
+        })
+    }
+
+    function displayGrid(scene) {
+        for (let y = 0; y < grid.length; y++) {
+            if (grid[y]) {
+                for (let x = 0; x < grid[y].length; x++) {
+                    if (grid[y][x]) { 
+                        let rect = scene.add.rectangle(
+                            x * 50 + 50,
+                            y * 50 + 50,
+                            48,
+                            48,
+                            0xffffff
+                        );
+                        rect.setStrokeStyle(2, 0x000000);
+                        displayObjects.push(rect); //save the displayed objects to clear when refreshed
+                        
+                        let text = scene.add.text(
+                            x * 50 + 50,
+                            y * 50 + 50,
+                            grid[y][x],
+                            { font: '32px Arial', fill: '#000000' }
+                        ).setOrigin(0.5, 0.5);
+                        displayObjects.push(text);
+                    }
+                }
+            }
+        }
+    }
+
+    function clearDisplayObjects() {
+        displayObjects.forEach((object) => object.destroy());
+        displayObjects = [];
+    }
+
+
+</script>
+</body>
+</html>
